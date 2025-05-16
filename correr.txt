@@ -1,5 +1,0 @@
-python -m server.main
-
-protocolo de shnorr zpk
-
-pip install -r requirements.txt
