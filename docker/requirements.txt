@@ -1,0 +1,11 @@
+fastapi
+wheel
+uvicorn
+cryptography
+pycryptodome
+websockets
+requests
+pyjwt
+petlib
+passlib[argon2]
+pydantic
