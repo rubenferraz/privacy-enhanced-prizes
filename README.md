@@ -9,7 +9,7 @@
 
 ## frontend
 ```
- cd frontend
+ cd client-pep
  npm i
  npm run dev
 ```
