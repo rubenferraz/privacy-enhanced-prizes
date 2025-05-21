@@ -73,7 +73,6 @@ def ot_encrypted():
     scratchcards = get_current_scratchcards()
     encrypted_cards = []
     for card in scratchcards:
-        # Pad card to modulus length
         card_bytes = str(card).encode()
         enc = rsa_encrypt_raw(public_key, card_bytes)
         encrypted_cards.append(base64.b64encode(enc).decode())

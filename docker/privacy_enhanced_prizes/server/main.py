@@ -50,7 +50,6 @@ def get_scratchcards():
 
 async def periodic_scratchcard_generation():
     while True:
-        # Generate a new set of scratchcards every TIME_PER_ROUND minutes.
         generate_scratchcards()
         await asyncio.sleep(TIME_PER_ROUND * 60)
 

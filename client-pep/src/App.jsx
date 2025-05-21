@@ -10,13 +10,15 @@ function App() {
   return (
     <div className='bg-zinc-800 min-h-screen'>
       <Navbar />
-      <Routes>
-        <Route path="/" element={<HomePage />} />
-        <Route path="/register" element={<RegisterPage />} />
-        <Route path="/login" element={<LoginPage />} />
-        <Route path="/scratchcard" element={<ScratchcardPage />} />
-        <Route path="*" element={<div className="text-center text-red-600 mt-10">Página não encontrada</div>} />
-      </Routes>
+      <div className=''>
+        <Routes>
+          <Route path="/" element={<HomePage />} />
+          <Route path="/register" element={<RegisterPage />} />
+          <Route path="/login" element={<LoginPage />} />
+          <Route path="/scratchcard" element={<ScratchcardPage />} />
+          <Route path="*" element={<div className="text-center text-red-600 mt-10">Página não encontrada</div>} />
+        </Routes>
+      </div>
     </div>
   )
 }

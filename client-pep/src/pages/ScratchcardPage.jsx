@@ -20,38 +20,123 @@ function randomBigInt(n) {
 }
 
 const API_URL = 'http://localhost:8000'
+
 const SCRATCHCARD_API = `${API_URL}/scratchcard/ot/encrypted`
 const RSA_API = `${API_URL}/crypto/rsa/public`
 const OT_REVEAL_API = `${API_URL}/scratchcard/ot/reveal`
 
 function pemToModExp(pem) {
-  // Parse PEM to get modulus (n) and exponent (e)
-  // This is a minimal parser for demo, assumes 2048-bit key and standard PEM
-  const b64 = pem.replace(/-----(BEGIN|END) PUBLIC KEY-----/g, '').replace(/\s+/g, '')
-  const der = Uint8Array.from(atob(b64), c => c.charCodeAt(0))
-  // ASN.1 parsing: skip header, find modulus and exponent
-  // This is a hack for demo, for production use a real ASN.1 parser
-  let i = 0
-  while (i < der.length && der[i] !== 0x02) i++ // INTEGER tag
-  i++
-  let modLen = der[i]
-  if (modLen & 0x80) {
-    const nBytes = modLen & 0x7f
-    modLen = 0
-    for (let j = 0; j < nBytes; ++j) modLen = (modLen << 8) | der[i + 1 + j]
-    i += nBytes
+  // Convert PEM to DER
+  const pemContents = pem.replace(/-----BEGIN PUBLIC KEY-----|-----END PUBLIC KEY-----|\s+/g, '');
+  const binaryDer = atob(pemContents);
+  const der = new Uint8Array(binaryDer.length);
+  for (let i = 0; i < binaryDer.length; i++) {
+    der[i] = binaryDer.charCodeAt(i);
   }
-  i++
-  let modulus = der.slice(i, i + modLen)
-  i += modLen
-  while (i < der.length && der[i] !== 0x02) i++
-  i++
-  let expLen = der[i++]
-  let exponent = der.slice(i, i + expLen)
+  
+  // Parse ASN.1 DER format for RSA public key
+  // SEQUENCE
+  let pos = 0;
+  if (der[pos++] !== 0x30) throw new Error('Expected SEQUENCE');
+  
+  // Skip sequence length
+  let seqLen = der[pos++];
+  if (seqLen & 0x80) {
+    const lenBytes = seqLen & 0x7F;
+    seqLen = 0;
+    for (let i = 0; i < lenBytes; i++) {
+      seqLen = (seqLen << 8) | der[pos++];
+    }
+  }
+  
+  // Skip AlgorithmIdentifier
+  if (der[pos] !== 0x30) throw new Error('Expected AlgorithmIdentifier SEQUENCE');
+  
+  // Find the start of the BIT STRING by parsing through AlgorithmIdentifier
+  const algoIdSeq = der[pos++];
+  let algoIdLen = der[pos++];
+  if (algoIdLen & 0x80) {
+    const lenBytes = algoIdLen & 0x7F;
+    algoIdLen = 0;
+    for (let i = 0; i < lenBytes; i++) {
+      algoIdLen = (algoIdLen << 8) | der[pos++];
+    }
+  }
+  pos += algoIdLen; // Skip algorithm identifier
+  
+  // BIT STRING containing the public key
+  if (der[pos++] !== 0x03) throw new Error('Expected BIT STRING');
+  
+  // Get BIT STRING length
+  let bitStringLen = der[pos++];
+  if (bitStringLen & 0x80) {
+    const lenBytes = bitStringLen & 0x7F;
+    bitStringLen = 0;
+    for (let i = 0; i < lenBytes; i++) {
+      bitStringLen = (bitStringLen << 8) | der[pos++];
+    }
+  }
+  
+  // Skip unused bits byte
+  pos++;
+  
+  // Parse the RSA public key structure inside the BIT STRING
+  if (der[pos++] !== 0x30) throw new Error('Expected SEQUENCE for RSA key');
+  
+  // Skip sequence length
+  let keySeqLen = der[pos++];
+  if (keySeqLen & 0x80) {
+    const lenBytes = keySeqLen & 0x7F;
+    keySeqLen = 0;
+    for (let i = 0; i < lenBytes; i++) {
+      keySeqLen = (keySeqLen << 8) | der[pos++];
+    }
+  }
+  
+  // INTEGER (modulus)
+  if (der[pos++] !== 0x02) throw new Error('Expected INTEGER for modulus');
+  
+  // Get modulus length
+  let modLen = der[pos++];
+  if (modLen & 0x80) {
+    const lenBytes = modLen & 0x7F;
+    modLen = 0;
+    for (let i = 0; i < lenBytes; i++) {
+      modLen = (modLen << 8) | der[pos++];
+    }
+  }
+  
+  // Skip leading zero if present
+  if (der[pos] === 0) {
+    pos++;
+    modLen--;
+  }
+  
+  // Extract modulus value
+  const modulus = der.slice(pos, pos + modLen);
+  pos += modLen;
+  
+  // INTEGER (exponent)
+  if (der[pos++] !== 0x02) throw new Error('Expected INTEGER for exponent');
+  
+  // Get exponent length
+  let expLen = der[pos++];
+  if (expLen & 0x80) {
+    const lenBytes = expLen & 0x7F;
+    expLen = 0;
+    for (let i = 0; i < lenBytes; i++) {
+      expLen = (expLen << 8) | der[pos++];
+    }
+  }
+  
+  // Extract exponent value
+  const exponent = der.slice(pos, pos + expLen);
+  
+  // Convert to BigInteger format
   return {
     n: new BigInteger([...modulus].map(x => x.toString(16).padStart(2, '0')).join(''), 16),
     e: new BigInteger([...exponent].map(x => x.toString(16).padStart(2, '0')).join(''), 16)
-  }
+  };
 }
 
 function hexToBase64(hex) {
@@ -185,22 +270,24 @@ function ScratchcardPage() {
         inset: 0;
         z-index: 10;
         background: repeating-linear-gradient(120deg, #f7e07c 0 10px, #f9d423 10px 20px);
-        mask-image: linear-gradient(120deg, transparent 0%, black 30%, black 100%);
-        -webkit-mask-image: linear-gradient(120deg, transparent 0%, black 30%, black 100%);
+        clip-path: polygon(0 0, 100% 0, 100% 100%, 0% 100%);
         animation: scratch-wipe 1s cubic-bezier(.7,0,.3,1) forwards;
       }
       @keyframes scratch-wipe {
         0% {
-          mask-position: 100% 0;
-          -webkit-mask-position: 100% 0;
+          clip-path: polygon(0 0, 100% 0, 100% 100%, 0% 100%);
+          opacity: 1;
+        }
+        30% {
+          clip-path: polygon(30% 0, 100% 0, 100% 100%, 0% 100%);
           opacity: 1;
         }
         60% {
-          opacity: 1;
+          clip-path: polygon(60% 0, 100% 0, 100% 100%, 30% 100%);
+          opacity: 0.9;
         }
         100% {
-          mask-position: 0 0;
-          -webkit-mask-position: 0 0;
+          clip-path: polygon(120% 0, 120% 0, 120% 100%, 100% 100%);
           opacity: 0;
         }
       }
@@ -298,16 +385,18 @@ function ScratchcardPage() {
     setLoading(false)
   }
 
-  // Logout handler
-  async function handleLogout() {
-    if (!token) return
-    try {
-      await fetch('http://localhost:8000/auth/logout?token=' + encodeURIComponent(token))
-    } catch {}
-    localStorage.removeItem('token')
-    setToken('')
-    navigate('/login')
-  }
+  // Load the selected index and result from local history for current round
+  useEffect(() => {
+    if (roundEnd && localHistory.length > 0) {
+      const currentRoundString = roundEnd.toISOString();
+      const currentRoundPlay = localHistory.find(h => h.roundEnd === currentRoundString);
+      
+      if (currentRoundPlay) {
+        setSelectedIndex(currentRoundPlay.index);
+        setScratchcardResult(currentRoundPlay.value);
+      }
+    }
+  }, [roundEnd, localHistory]);
 
   // Determine win/lose message for current round
   let winMsg = ''
@@ -319,21 +408,7 @@ function ScratchcardPage() {
     } else {
       winMsg = `Result: ${scratchcardResult}`
     }
-  } else if (selectedIndex !== null && claims[selectedIndex]?.claimed) {
-    // If user already claimed, show last result
-    const last = localHistory.find(
-      h => h.roundEnd === (roundEnd ? roundEnd.toISOString() : null)
-    )
-    if (last) {
-      if (last.value.trim() === '1') {
-        winMsg = '🎉 Congratulations, you WON this round!'
-      } else if (last.value.trim() === '0') {
-        winMsg = '🙁 Sorry, not a winner this round.'
-      } else {
-        winMsg = `Result: ${last.value}`
-      }
-    }
-  }
+  } 
 
   // Determine if user already played this round
   const alreadyPlayed = (() => {
@@ -348,7 +423,7 @@ function ScratchcardPage() {
     <div className="container mx-auto mt-16 p-8 bg-zinc-900 rounded shadow">
       {/* Confetti handled by canvas-confetti, no JSX needed */}
       <div className="flex justify-between items-center mb-2">
-        <h2 className="text-2xl font-extralight mb-3 text-zinc-100 tracking-wide uppercase">Scratchcard Page</h2>
+        <h2 className="text-2xl font-extralight mb-3 text-zinc-100 tracking-wide uppercase">Raspadinhas</h2>
       </div>
       <div className="mb-2 flex items-center justify-end gap-2">
         <span className="text-xs text-zinc-200 tracking-wide font-extralight">Next round in:</span>
@@ -362,6 +437,7 @@ function ScratchcardPage() {
           return (
             <button
               key={idx}
+              data-idx={idx}
               className={`
                 relative flex flex-col items-center justify-center
                 w-auto h-24 rounded-xl shadow-lg border-2
@@ -377,7 +453,16 @@ function ScratchcardPage() {
               style={{
                 backgroundImage: claimed
                   ? 'repeating-linear-gradient(135deg, #888 0 10px, #aaa 10px 20px)'
-                  : 'linear-gradient(120deg, #f7e07c 0%, #f9d423 100%)'
+                  : (() => {
+                      // Only color the current round's selected card based on the result
+                      if (roundEnd && selected && scratchcardResult) {
+                        const isWinner = scratchcardResult.trim() === '1';
+                        return isWinner ? 
+                          'linear-gradient(120deg, #10b981 0%, #34d399 100%)' : 
+                          'linear-gradient(120deg, #ef4444 0%, #f87171 100%)';
+                      }
+                      return 'linear-gradient(120deg, #f7e07c 0%, #f9d423 100%)';
+                    })()
               }}
             >
               {/* Gray underlay for scratch effect */}
@@ -391,6 +476,26 @@ function ScratchcardPage() {
                   }}
                 />
               )}
+              
+              {/* Decorative pattern for scratchcard */}
+              {!claimed && (
+                <div 
+                  className="absolute inset-0 z-10 mix-blend-overlay opacity-60"
+                  style={{
+                    backgroundImage: `
+                      radial-gradient(circle at 25% 25%, rgba(255,255,255,0.2) 2px, transparent 0),
+                      radial-gradient(circle at 75% 75%, rgba(255,255,255,0.2) 2px, transparent 0),
+                      radial-gradient(circle at 50% 50%, rgba(255,255,255,0.3) 3px, transparent 0),
+                      radial-gradient(circle at 15% 85%, rgba(0,0,0,0.1) 2px, transparent 0),
+                      radial-gradient(circle at 85% 15%, rgba(0,0,0,0.1) 2px, transparent 0)
+                    `,
+                    backgroundSize: '20px 20px, 20px 20px, 20px 20px, 20px 20px, 20px 20px',
+                    backgroundPosition: '0 0, 0 0, 0 0, 0 0, 0 0',
+                    pointerEvents: 'none'
+                  }}
+                />
+              )}
+              
               {/* Scratch mask animation */}
               <AnimatePresence>
                 {selected && !claimed && (
@@ -410,12 +515,36 @@ function ScratchcardPage() {
                 )}
               </AnimatePresence>
               {/* Card content (always on top of gray underlay, under mask) */}
-              <span className="text-xs font-bold tracking-widest uppercase mb-1 z-10 relative">
+                {/* <span className="text-xs font-bold tracking-widest uppercase mb-1 z-10 relative">
                 Scratchcard #{idx}
-              </span>
-              <span className={`text-md italic z-10 relative ${claimed ? 'line-through' : ''}`}>
+              </span> */}
+              {/* <span className={`text-md italic z-10 relative ${claimed ? 'line-through' : ''}`}>
                 {claimed ? 'CLAIMED' : 'SCRATCH ME'}
-              </span>
+              </span> */}
+              
+              {/* Show a lottery/scratch symbol on unclaimed cards */}
+              {!claimed && !selected && (
+                <div className="text-zinc-800 font-bold z-20 relative">
+                  <span className="text-3xl">€</span>
+                </div>
+              )}
+              
+              {/* Show result on selected card after revealing */}
+              {(() => {
+                // Only show for the current selection
+                if (selected && !claimed && scratchcardResult) {
+                  return (
+                    <div className="z-40 relative">
+                      <span className="text-4xl font-bold text-white">
+                        {scratchcardResult.trim() === '1' ? '€' : 'X'}
+                      </span>
+                    </div>
+                  );
+                }
+                return null;
+              })()}
+              
+              {/* Show 'Selected' text only for actively selected card */}
               {selected && !claimed && (
                 <span className="mt-2 text-emerald-600 text-xs font-bold animate-pulse z-40 relative">Selected</span>
               )}

@@ -4,7 +4,7 @@
   "version": "0.0.0",
   "type": "module",
   "scripts": {
-    "dev": "vite",
+    "dev": "vite --host",
     "build": "vite build",
     "lint": "eslint .",
     "preview": "vite preview"
@@ -12,6 +12,7 @@
   "dependencies": {
     "@peculiar/webcrypto": "^1.5.0",
     "@tailwindcss/vite": "^4.1.6",
+    "bigint-conversion": "^2.4.3",
     "canvas-confetti": "^1.9.3",
     "framer-motion": "^12.11.3",
     "jsbn": "^1.1.0",
