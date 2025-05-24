@@ -14,6 +14,7 @@
     "@tailwindcss/vite": "^4.1.6",
     "bigint-conversion": "^2.4.3",
     "canvas-confetti": "^1.9.3",
+    "crypto-js": "^4.2.0",
     "framer-motion": "^12.11.3",
     "jsbn": "^1.1.0",
     "react": "^19.1.0",

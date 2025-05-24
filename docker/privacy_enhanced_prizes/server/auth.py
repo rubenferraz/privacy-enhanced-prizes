@@ -13,6 +13,7 @@ from cryptography.hazmat.primitives import serialization
 
 from server.utils import derive_shared_key
 import server.config as g
+from server.zk import load_params, generate_keys, verify_proof
 
 router = APIRouter()
 SECRET_KEY = "superseguro"
@@ -34,6 +35,16 @@ class LoginData(BaseModel):
 class DHExchange(BaseModel):
     username: str
     client_pub_key: str  # public key as string
+    
+# --- ZKP Models ---
+class ZKPInitData(BaseModel):
+    username: str
+    public_key: str  # y = g^x mod p
+    r: str          # r = g^v mod p
+
+class ZKPVerifyData(BaseModel):
+    username: str
+    s: str          # s = (v + c*x) mod q
 
 # --- JWT ---
 def create_jwt(username: str):
@@ -171,8 +182,15 @@ def register(data: RegisterEncryptedData):
         # agora que se tem a password crua, vamos fazer o hash da password + salt
         salt = os.urandom(16) # 16 bytes salt
         hashed_password = hashlib.pbkdf2_hmac('sha256', decrypted_password.encode(), salt, 100_000)
-        users[data.username] = (hashed_password, salt)
-        logging.debug(f"[REGISTER] Stored hashed password and salt for {data.username}")
+        
+        # Generate ZKP public key for this user
+        p, q, g = load_params()
+        zkp_public_key = generate_keys(decrypted_password)
+        
+        # Store the user data: (hashed_password, salt, zkp_public_key)
+        users[data.username] = (hashed_password, salt, zkp_public_key)
+        
+        logging.debug(f"[REGISTER] Stored hashed password, salt and ZKP public key for {data.username}")
 
     except Exception as e:
         logging.error(f"[REGISTER] Decryption failed for {data.username}: {str(e)}")
@@ -192,7 +210,12 @@ def login(data: LoginData):
         logging.error(f"User {data.username} not found")
         raise HTTPException(status_code=401, detail="Invalid credentials")
     
-    hashed_password, salt = user_entry
+    # Unpack user data - now includes ZKP public key
+    if len(user_entry) == 3:
+        hashed_password, salt, _ = user_entry  # _ is the ZKP public key
+    else:
+        hashed_password, salt = user_entry  # Old format without ZKP key
+    
     logging.debug(f"[LOGIN] Stored hashed password for {data.username}: {hashed_password}")
 
     # hash da passwd que o utilizador enviou + salt
@@ -207,6 +230,107 @@ def login(data: LoginData):
 
     logging.error(f"[LOGIN] Invalid credentials for {data.username}")
     raise HTTPException(status_code=401, detail="Invalid credentials")
+
+# --- ZKP Endpoints ---
+@router.get("/zkp/available")
+def zkp_available():
+    """Check if ZKP authentication is available"""
+    logging.debug("[ZKP] Checking ZKP availability")
+    return {"available": True}
+
+@router.get("/zkp/params")
+def zkp_params():
+    """Get ZKP parameters (p, q, g)"""
+    logging.debug("[ZKP] Sending ZKP parameters")
+    p, q, g = load_params()
+    return {
+        "p": str(p),
+        "q": str(q),
+        "g": str(g)
+    }
+
+# Dictionary to store ZKP challenges
+zkp_challenges = {}  # username -> (challenge, public_key, r)
+
+@router.post("/zkp/login/init")
+def zkp_login_init(data: ZKPInitData):
+    """
+    First step of ZKP authentication: receive username, public key (y) and r value
+    """
+    logging.debug(f"[ZKP] Initiating login for user: {data.username}")
+    
+    # Verify if user exists
+    user_entry = users.get(data.username)
+    if not user_entry:
+        logging.error(f"[ZKP] User not found: {data.username}")
+        raise HTTPException(status_code=401, detail="Invalid credentials")
+    
+    # Parse the public key sent from the client
+    client_y = int(data.public_key)
+    
+    # If this is the first ZKP login, store the public key
+    if len(user_entry) == 2:
+        hashed_password, salt = user_entry
+        logging.debug(f"[ZKP] First ZKP login for {data.username}, storing public key")
+        # Update the user entry with the ZKP public key
+        users[data.username] = (hashed_password, salt, client_y)
+    
+    # Generate a random challenge
+    c = secrets.randbelow(2**32)
+    
+    # Store the challenge, y, and r for verification
+    zkp_challenges[data.username] = (
+        c,
+        client_y,
+        int(data.r)
+    )
+    
+    logging.debug(f"[ZKP] Challenge generated for {data.username}: {c}")
+    return {"challenge": c}
+
+@router.post("/zkp/login/verify")
+def zkp_login_verify(data: ZKPVerifyData):
+    """
+    Second step of ZKP authentication: verify the response s to the challenge
+    """
+    logging.debug(f"[ZKP] Verifying ZKP for user: {data.username}")
+    
+    if data.username not in zkp_challenges:
+        logging.error(f"[ZKP] No pending challenge for user: {data.username}")
+        raise HTTPException(status_code=400, detail="No challenge found or timeout")
+    
+    # Get the stored challenge data
+    c, y, r = zkp_challenges.pop(data.username)
+    
+    # Get the ZKP parameters
+    p, q, g = load_params()
+    
+    # Get user data to check if public key matches
+    user_entry = users.get(data.username)
+    if not user_entry:
+        logging.error(f"[ZKP] Utilizador não encontrado: {data.username}")
+        raise HTTPException(status_code=401, detail="Invalid credentials")
+    
+    # If the user has a stored ZKP public key, verify that it matches
+    if len(user_entry) == 3:
+        _, _, stored_y = user_entry
+        if stored_y != y:
+            logging.error(f"[ZKP] Public key mismatch for user: {data.username}")
+            raise HTTPException(status_code=401, detail="Authentication failed: public key mismatch")
+    
+    # verificar o challenge
+    s = int(data.s)
+    if not verify_proof(y, r, c, s):
+        logging.error(f"[ZKP] ZKP verification failed for user: {data.username}")
+        raise HTTPException(status_code=401, detail="Authentication failed")
+    
+    logging.debug(f"[ZKP] ZKP verificado com sucesso {data.username}")
+    
+    # criar o JWT
+    token = create_jwt(data.username)
+    sessions[data.username] = token
+    
+    return {"token": token}
 
 @router.get("/active_sessions")
 def active_sessions():

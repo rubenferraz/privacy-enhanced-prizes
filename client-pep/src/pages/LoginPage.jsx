@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { fetchWithMAC } from '../utils/mac'
 import { FaArrowLeft } from 'react-icons/fa'
+import { initiateZkpLogin, completeZkpLogin } from '../utils/zkpAuth'
 
 const API_URL = 'https://localhost:8000/auth'
 
@@ -10,6 +11,7 @@ function LoginPage() {
   const [loginPassword, setLoginPassword] = useState('')
   const [loginMsg, setLoginMsg] = useState('')
   const [token, setToken] = useState('')
+  const [isZkpAvailable, setIsZkpAvailable] = useState(true) // Assume ZKP is available
   const navigate = useNavigate()
 
   // Redirect to scratchcard if already logged in
@@ -17,6 +19,22 @@ function LoginPage() {
     if (localStorage.getItem('token')) {
       navigate('/scratchcard')
     }
+    
+    // Check if ZKP is available
+    async function checkZkpAvailability() {
+      try {
+        const response = await fetchWithMAC(`${API_URL}/zkp/available`, {
+          method: 'GET',
+        });
+        const data = await response.json();
+        setIsZkpAvailable(data.available);
+      } catch (err) {
+        console.error('Error checking ZKP availability:', err);
+        setIsZkpAvailable(false);
+      }
+    }
+    
+    checkZkpAvailability();
   }, [navigate])
 
   async function handleLogin(e) {
@@ -25,28 +43,54 @@ function LoginPage() {
     setToken('')
 
     try {
-      const res = await fetchWithMAC(`${API_URL}/login`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          username: loginUsername,
-          password: loginPassword
-        }),
-      });
-
-      const data = await res.json();
-      
-      if (res.ok && data.token) {
-        setLoginMsg('Login bem-sucedido!')
-        setToken(data.token)
-        localStorage.setItem('token', data.token)
-        navigate('/scratchcard')
+      if (isZkpAvailable) {
+        // Step 1: Initiate ZKP authentication
+        const initResponse = await initiateZkpLogin(loginUsername, loginPassword);
+        
+        if (!initResponse.challenge) {
+          throw new Error('Invalid response from server during ZKP initiation');
+        }
+        
+        // Step 2: Complete ZKP authentication with the challenge received
+        const verifyResponse = await completeZkpLogin(
+          loginUsername, 
+          loginPassword, 
+          initResponse.challenge
+        );
+        
+        if (verifyResponse.token) {
+          setLoginMsg('Login bem-sucedido com Zero-Knowledge Proof!');
+          setToken(verifyResponse.token);
+          localStorage.setItem('token', verifyResponse.token);
+          navigate('/scratchcard');
+        } else {
+          setLoginMsg(verifyResponse.detail || 'Falha na verificação ZKP');
+        }
       } else {
-        setLoginMsg(data.detail || 'Credenciais inválidas')
+        // Fallback to traditional login if ZKP is not available
+        const res = await fetchWithMAC(`${API_URL}/login`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            username: loginUsername,
+            password: loginPassword
+          }),
+        });
+
+        const data = await res.json();
+        
+        if (res.ok && data.token) {
+          setLoginMsg('Login bem-sucedido!');
+          setToken(data.token);
+          localStorage.setItem('token', data.token);
+          navigate('/scratchcard');
+        } else {
+          setLoginMsg(data.detail || 'Credenciais inválidas');
+        }
       }
     } catch (err) {
       console.error('Login error:', err)
-      setLoginMsg('Erro ao tentar fazer login')
+      setLoginMsg(`Erro ao tentar fazer login: ${err.message}`)
     }
   }
 
