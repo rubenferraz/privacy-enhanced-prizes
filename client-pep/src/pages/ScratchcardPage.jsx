@@ -3,8 +3,9 @@ import { useNavigate } from 'react-router-dom'
 import { motion, AnimatePresence } from 'framer-motion'
 import confetti from 'canvas-confetti'
 import { RSAKey, BigInteger } from 'jsbn'
+import { fetchWithMAC } from '../utils/mac'
 
-// Helper to generate a random BigInteger in [1, n-1]
+// fun: generate a big integer
 function randomBigInt(n) {
   // n: BigInteger
   const bytes = Math.ceil(n.bitLength() / 8)
@@ -19,14 +20,14 @@ function randomBigInt(n) {
   return r
 }
 
-const API_URL = 'http://localhost:8000'
 
+const API_URL = 'https://localhost:8000' 
 const SCRATCHCARD_API = `${API_URL}/scratchcard/ot/encrypted`
 const RSA_API = `${API_URL}/crypto/rsa/public`
 const OT_REVEAL_API = `${API_URL}/scratchcard/ot/reveal`
 
 function pemToModExp(pem) {
-  // Convert PEM to DER
+  // pem to der
   const pemContents = pem.replace(/-----BEGIN PUBLIC KEY-----|-----END PUBLIC KEY-----|\s+/g, '');
   const binaryDer = atob(pemContents);
   const der = new Uint8Array(binaryDer.length);
@@ -49,10 +50,10 @@ function pemToModExp(pem) {
     }
   }
   
-  // Skip AlgorithmIdentifier
+  // skipping the algorithm identifier
   if (der[pos] !== 0x30) throw new Error('Expected AlgorithmIdentifier SEQUENCE');
   
-  // Find the start of the BIT STRING by parsing through AlgorithmIdentifier
+  // start of BIT STRING
   const algoIdSeq = der[pos++];
   let algoIdLen = der[pos++];
   if (algoIdLen & 0x80) {
@@ -62,12 +63,12 @@ function pemToModExp(pem) {
       algoIdLen = (algoIdLen << 8) | der[pos++];
     }
   }
-  pos += algoIdLen; // Skip algorithm identifier
+  pos += algoIdLen; // skipping the algorithm identifier
   
-  // BIT STRING containing the public key
+  // BIT STRING (which has the key)
   if (der[pos++] !== 0x03) throw new Error('Expected BIT STRING');
   
-  // Get BIT STRING length
+  // BIT STRING length
   let bitStringLen = der[pos++];
   if (bitStringLen & 0x80) {
     const lenBytes = bitStringLen & 0x7F;
@@ -77,13 +78,13 @@ function pemToModExp(pem) {
     }
   }
   
-  // Skip unused bits byte
+  // skipping unused bits
   pos++;
   
-  // Parse the RSA public key structure inside the BIT STRING
+  // Parsing the RSA pk structure
   if (der[pos++] !== 0x30) throw new Error('Expected SEQUENCE for RSA key');
   
-  // Skip sequence length
+  // skipping the sequence length
   let keySeqLen = der[pos++];
   if (keySeqLen & 0x80) {
     const lenBytes = keySeqLen & 0x7F;
@@ -93,10 +94,10 @@ function pemToModExp(pem) {
     }
   }
   
-  // INTEGER (modulus)
+  // INTEGER (mod)
   if (der[pos++] !== 0x02) throw new Error('Expected INTEGER for modulus');
   
-  // Get modulus length
+  // get mod length
   let modLen = der[pos++];
   if (modLen & 0x80) {
     const lenBytes = modLen & 0x7F;
@@ -106,20 +107,20 @@ function pemToModExp(pem) {
     }
   }
   
-  // Skip leading zero if present
+  // skipping the leading 0 if present
   if (der[pos] === 0) {
     pos++;
     modLen--;
   }
   
-  // Extract modulus value
+  // extract mod
   const modulus = der.slice(pos, pos + modLen);
   pos += modLen;
   
-  // INTEGER (exponent)
+  // INTEGER (exp)
   if (der[pos++] !== 0x02) throw new Error('Expected INTEGER for exponent');
   
-  // Get exponent length
+  // get the exp length
   let expLen = der[pos++];
   if (expLen & 0x80) {
     const lenBytes = expLen & 0x7F;
@@ -129,10 +130,10 @@ function pemToModExp(pem) {
     }
   }
   
-  // Extract exponent value
+  // extract the exp value
   const exponent = der.slice(pos, pos + expLen);
   
-  // Convert to BigInteger format
+  // converting to BigInteger
   return {
     n: new BigInteger([...modulus].map(x => x.toString(16).padStart(2, '0')).join(''), 16),
     e: new BigInteger([...exponent].map(x => x.toString(16).padStart(2, '0')).join(''), 16)
@@ -195,8 +196,8 @@ function ScratchcardPage() {
       setError('')
       try {
         const [encRes, rsaRes] = await Promise.all([
-          fetch(SCRATCHCARD_API).then(r => r.json()),
-          fetch(RSA_API).then(r => r.json())
+          fetchWithMAC(SCRATCHCARD_API).then(r => r.json()),
+          fetchWithMAC(RSA_API).then(r => r.json())
         ])
         setEncryptedScratchcards(encRes.encrypted_scratchcards || [])
         setClaims(encRes.claims || [])
@@ -296,7 +297,7 @@ function ScratchcardPage() {
     }
   }, [])
 
-  // Show confetti when win (canvas-confetti)
+  // CONFETTI!
   useEffect(() => {
     if (scratchcardResult && scratchcardResult.trim() === '1' && !confettiFiredRef.current) {
       confettiFiredRef.current = true
@@ -339,7 +340,7 @@ function ScratchcardPage() {
       const blinded = c.multiply(re).mod(n)
       const blindedHex = blinded.toString(16)
       const blindedB64 = hexToBase64(blindedHex)
-      const res = await fetch(OT_REVEAL_API, {
+      const res = await fetchWithMAC(OT_REVEAL_API, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',

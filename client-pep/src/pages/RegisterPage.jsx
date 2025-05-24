@@ -1,8 +1,9 @@
 import { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import * as bigintConversion from 'bigint-conversion'
+import { fetchWithMAC } from '../utils/mac'
 
-const API_URL = 'http://localhost:8000/auth'
+const API_URL = 'https://localhost:8000/auth'
 
 // For standard Diffie-Hellman in the browser
 class DHBrowser {
@@ -114,7 +115,7 @@ function RegisterPage() {
 
     try {
       // 1. Fetch DH parameters from backend
-      const params = await fetch(`${API_URL}/dh/params`).then(res => res.json())
+      const params = await fetchWithMAC(`${API_URL}/dh/params`).then(res => res.json())
       const pBase64 = params.p; // Base64 encoded p value
       const g = params.g; // g value as number
       
@@ -138,7 +139,7 @@ function RegisterPage() {
       const keys = dh.generateKeys();
       
       // 4. Get server's public key
-      const dhStart = await fetch(`${API_URL}/dh/start`).then(res => res.json());
+      const dhStart = await fetchWithMAC(`${API_URL}/dh/start`).then(res => res.json());
       const serverPublicKeyPEM = dhStart.server_pub_key;
       
       // Extract the server public key value from PEM format
@@ -153,7 +154,7 @@ function RegisterPage() {
       const clientPublicKeyPEM = `-----BEGIN PUBLIC KEY-----\n${clientPublicKeyBase64}\n-----END PUBLIC KEY-----`;
       
       // Send client public key to server
-      const dhFinishResponse = await fetch(`${API_URL}/dh/finish`, {
+      const dhFinishResponse = await fetchWithMAC(`${API_URL}/dh/finish`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -209,7 +210,7 @@ function RegisterPage() {
       const ivB64 = btoa(String.fromCharCode(...iv));
 
       // 9. Register with encrypted password
-      const res = await fetch(`${API_URL}/register`, {
+      const res = await fetchWithMAC(`${API_URL}/register`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({

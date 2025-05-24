@@ -1,7 +1,8 @@
 import { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
+import { fetchWithMAC } from '../utils/mac'
 
-const API_URL = 'http://localhost:8000/auth'
+const API_URL = 'https://localhost:8000/auth'
 
 function LoginPage() {
   const [loginUsername, setLoginUsername] = useState('')
@@ -23,8 +24,7 @@ function LoginPage() {
     setToken('')
 
     try {
-      // Just perform a simple login with username and password
-      const res = await fetch(`${API_URL}/login`, {
+      const res = await fetchWithMAC(`${API_URL}/login`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({

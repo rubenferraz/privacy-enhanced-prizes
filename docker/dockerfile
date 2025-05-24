@@ -26,4 +26,4 @@ EXPOSE 8000
 
 # Command to run the application
 # CMD ["python", "-m", "server.main"]
-CMD ["uvicorn", "server.main:app", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["uvicorn", "server.main:app", "--host", "0.0.0.0", "--port", "443", "--log-level", "warning", "--ssl-keyfile=key.pem", "--ssl-certfile=cert.pem"]
