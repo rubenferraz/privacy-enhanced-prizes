@@ -16,12 +16,12 @@ def generate_mac(data, secret=g.MAC_SECRET):
         data_bytes = data.encode('utf-8')
     h = hmac.new(secret.encode('utf-8'), data_bytes, hashlib.sha256)
     result = base64.b64encode(h.digest()).decode('utf-8')
-    logger.debug(f"Generated MAC: {result[:20]}... for data of length {len(data_bytes)} bytes")
+    # logger.debug(f"[MAC] Generated MAC: {result[:20]}... for data of length {len(data_bytes)} bytes")
     return result
 
 def verify_mac(data, mac, secret=g.MAC_SECRET):
     """Verify if the provided MAC matches the calculated MAC for the data."""
     expected_mac = generate_mac(data, secret)
     result = hmac.compare_digest(expected_mac, mac)
-    logger.debug(f"MAC verification: {'SUCCESS' if result else 'FAILED'}")
+    #  logger.debug(f"[MAC] MAC verification: {'SUCCESS' if result else 'FAILED'}")
     return result

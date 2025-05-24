@@ -21,10 +21,12 @@ function randomBigInt(n) {
 }
 
 
-const API_URL = 'https://localhost:8000' 
+const API_URL = 'https://localhost:8000' 
 const SCRATCHCARD_API = `${API_URL}/scratchcard/ot/encrypted`
 const RSA_API = `${API_URL}/crypto/rsa/public`
 const OT_REVEAL_API = `${API_URL}/scratchcard/ot/reveal`
+const VERIFY_TOKEN_API = `${API_URL}/auth/verify-token`
+const RENEW_TOKEN_API = `${API_URL}/auth/renew-token`
 
 function pemToModExp(pem) {
   // pem to der
@@ -169,6 +171,7 @@ function ScratchcardPage() {
   })
   const [showConfetti, setShowConfetti] = useState(false)
   const confettiFiredRef = useRef(false)
+  const [tokenExpiresIn, setTokenExpiresIn] = useState(null)
 
   const navigate = useNavigate()
 
@@ -183,6 +186,82 @@ function ScratchcardPage() {
     return () => window.removeEventListener('storage', syncToken)
   }, [])
 
+  // Função para renovar o token
+  const renewToken = async () => {
+    if (!token) return;
+    
+    try {
+      setLoading(true);
+      const response = await fetchWithMAC(RENEW_TOKEN_API, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${token}`
+        }
+      });
+      
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.detail || 'Falha ao renovar token');
+      }
+      
+      const data = await response.json();
+      const newToken = data.token;
+      
+      // Atualizar o token no localStorage e no estado
+      localStorage.setItem('token', newToken);
+      setToken(newToken);
+      
+      // Resetar o erro se existir
+      setError('');
+      
+      // Atualizar o tempo de expiração
+      verifyToken();
+      
+    } catch (err) {
+      console.error('Erro ao renovar token:', err);
+      setError(`Erro ao renovar sessão: ${err.message}`);
+    } finally {
+      setLoading(false);
+    }
+  };
+  
+  // Verificar validade do token periodicamente
+  useEffect(() => {
+    if (!token) return;
+
+    // Função para verificar o token
+    async function verifyToken() {
+      try {
+        const response = await fetchWithMAC(VERIFY_TOKEN_API, {
+          headers: {
+            'Authorization': `Bearer ${token}`
+          }
+        });
+        const data = await response.json();
+        
+        if (!data.valid) {
+          // Token inválido - redirecionar para login
+          console.warn('Token inválido:', data.reason);
+          localStorage.removeItem('token');
+          setToken('');
+          navigate('/login', { replace: true });
+          return;
+        }
+        
+        // Atualizar tempo de expiração
+        setTokenExpiresIn(data.remaining_time);
+      } catch (err) {
+        console.error('Erro ao verificar token:', err);
+      }
+    }
+
+    // Verificar token imediatamente e depois a cada minuto
+    verifyToken();
+    const interval = setInterval(verifyToken, 60000);
+    
+    return () => clearInterval(interval);
+  }, [token, navigate])
+
   // Redirect to login if not authenticated
   useEffect(() => {
     if (!token) {
@@ -190,7 +269,7 @@ function ScratchcardPage() {
     }
   }, [token, navigate])
 
-  // Fetch encrypted scratchcards, claim status, and RSA public key
+  // obter as raspadinhas, o estado delas (claim ou não) e a chave RSA
   useEffect(() => {
     async function fetchData() {
       setError('')
@@ -202,9 +281,9 @@ function ScratchcardPage() {
         setEncryptedScratchcards(encRes.encrypted_scratchcards || [])
         setClaims(encRes.claims || [])
         setRsaPublicKey(rsaRes.rsa_public_key || '')
-        // Fix: parse round_end as ISO string, handle trailing Z and possible double timezone
+
+        // tempo de fim da ronda
         if (encRes.round_end) {
-          // Remove trailing 'Z' if already has a timezone offset
           let roundEndStr = encRes.round_end
           if (roundEndStr.match(/\+\d{2}:\d{2}Z$/)) {
             roundEndStr = roundEndStr.replace(/Z$/, '')
@@ -227,13 +306,12 @@ function ScratchcardPage() {
     return () => clearInterval(interval)
   }, [])
 
-  // Timer countdown effect and reset selectedIndex when round changes
+  // temporizador
   useEffect(() => {
     if (!roundEnd) {
       setTimeLeft('')
       return
     }
-    // Reset selectedIndex if roundEnd changed (new round)
     if (prevRoundEnd && roundEnd.getTime() !== prevRoundEnd.getTime()) {
       setSelectedIndex(null)
       setScratchcardResult('')
@@ -253,12 +331,12 @@ function ScratchcardPage() {
     return () => clearInterval(timer)
   }, [roundEnd, prevRoundEnd])
 
-  // Save local history to localStorage on change
+  // guardar o histórico localmente
   useEffect(() => {
     localStorage.setItem('scratchcard_history', JSON.stringify(localHistory))
   }, [localHistory])
 
-  // Add CSS for scratch animation
+
   useEffect(() => {
     const styleId = 'scratchcard-anim-style'
     if (!document.getElementById(styleId)) {
@@ -403,15 +481,16 @@ function ScratchcardPage() {
   let winMsg = ''
   if (selectedIndex !== null && scratchcardResult) {
     if (scratchcardResult.trim() === '1') {
-      winMsg = '🎉 Congratulations, you WON this round!'
+      winMsg = 'Parabéns, GANHOU!'
     } else if (scratchcardResult.trim() === '0') {
-      winMsg = '🙁 Sorry, not a winner this round.'
-    } else {
-      winMsg = `Result: ${scratchcardResult}`
-    }
+      winMsg = 'Não ganhou nada, mais sorte para a próxima!'
+    } 
+    // else {
+    //   winMsg = `Resultado: ${scratchcardResult}`
+    // }
   } 
 
-  // Determine if user already played this round
+  // verificar se o user já jogou nesta ronda
   const alreadyPlayed = (() => {
     if (!roundEnd) return false
     const thisRound = localHistory.find(
@@ -420,179 +499,253 @@ function ScratchcardPage() {
     return !!thisRound
   })()
 
+  // Add logout handler
+  const handleLogout = async () => {
+    try {
+      const token = localStorage.getItem('token');
+      if (token) {
+        await fetchWithMAC(`${API_URL}/auth/logout`, {
+          headers: {
+            'Authorization': `Bearer ${token}`
+          }
+        });
+        localStorage.removeItem('token');
+        localStorage.removeItem('scratchcard_history');
+        navigate('/', { replace: true });
+      }
+    } catch (err) {
+      console.error('Logout error:', err);
+    }
+  };
+
   return (
-    <div className="container mx-auto mt-16 p-8 bg-zinc-900 rounded shadow">
-      {/* Confetti handled by canvas-confetti, no JSX needed */}
-      <div className="flex justify-between items-center mb-2">
-        <h2 className="text-2xl font-extralight mb-3 text-zinc-100 tracking-wide uppercase">Raspadinhas</h2>
-      </div>
-      <div className="mb-2 flex items-center justify-end gap-2">
-        <span className="text-xs text-zinc-200 tracking-wide font-extralight">Next round in:</span>
-        <span className="text-lg text-zinc-200 tracking-wide font-extralight">{timeLeft}</span>
-      </div>
-      <div className="mb-4 grid grid-cols-2 md:grid-cols-4 gap-4">
-        {encryptedScratchcards.map((_, idx) => {
-          const claimed = claims[idx]?.claimed
-          const selected = selectedIndex === idx
-          const unavailable = claimed || loading || alreadyPlayed
-          return (
-            <button
-              key={idx}
-              data-idx={idx}
-              className={`
-                relative flex flex-col items-center justify-center
-                w-auto h-24 rounded-xl shadow-lg border-2
-                transition-all duration-200
-                overflow-hidden
-                ${claimed
-                  ? 'bg-gradient-to-br from-zinc-500 to-zinc-700 border-zinc-400 text-zinc-300 cursor-not-allowed opacity-60'
-                  : 'border-yellow-300'}
-                ${unavailable ? 'cursor-not-allowed hover:scale-100' : 'hover:scale-105 hover:shadow-2xl'}
-              `}
-              disabled={unavailable}
-              onClick={() => handleClaimScratchcard(idx)}
-              style={{
-                backgroundImage: claimed
-                  ? 'repeating-linear-gradient(135deg, #888 0 10px, #aaa 10px 20px)'
-                  : (() => {
-                      // Only color the current round's selected card based on the result
-                      if (roundEnd && selected && scratchcardResult) {
-                        const isWinner = scratchcardResult.trim() === '1';
-                        return isWinner ? 
-                          'linear-gradient(120deg, #10b981 0%, #34d399 100%)' : 
-                          'linear-gradient(120deg, #ef4444 0%, #f87171 100%)';
-                      }
-                      return 'linear-gradient(120deg, #f7e07c 0%, #f9d423 100%)';
-                    })()
-              }}
-            >
-              {/* Gray underlay for scratch effect */}
-              {!claimed && (
-                <div
-                  className="absolute inset-0 z-0"
+    <div className='flex flex-col items-center justify-center min-h-screen py-12'>
+      <div className="container max-w-6xl p-8 bg-zinc-900 rounded shadow">
+        <div className="flex justify-between items-center mb-2">
+            <h2 className="text-2xl font-extralight mb-0 text-zinc-100 tracking-wide uppercase">Raspadinhas</h2>
+            <div className="flex items-center gap-4">
+              <div className="flex items-center justify-end gap-2">
+                <span className="text-xs text-zinc-200 tracking-wide font-extralight">Tempo restante:</span>
+                <span className="text-lg text-zinc-200 tracking-wide font-extralight">{timeLeft}</span>
+              </div>
+              {/* Add logout button */}
+              <button
+                onClick={handleLogout}
+                className="bg-zinc-700 hover:bg-zinc-600 text-zinc-300 px-3 py-1 text-xs transition-colors"
+              >
+                Sair
+              </button>
+            </div>
+          </div>
+        <div className='grid grid-cols-1 md:grid-cols-3 gap-6'>
+
+        <div className='col-span-1 md:col-span-2'>
+
+          {/* Token expiration warning */}
+          {tokenExpiresIn !== null && tokenExpiresIn < 300 && tokenExpiresIn > 0 && (
+            <div className="mb-4 p-2 bg-amber-900/30 border border-amber-800 rounded-md text-center">
+              <p className="text-amber-300 text-xs">
+                ⚠️ A sua sessão expira em {Math.ceil(tokenExpiresIn / 60)} minuto(s).
+                <button 
+                  onClick={renewToken}
+                  disabled={loading}
+                  className="ml-2 px-2 py-0.5 bg-amber-700 hover:bg-amber-600 rounded text-amber-100 text-xs transition-colors"
+                >
+                  {loading ? 'Renovando...' : 'Renovar sessão'}
+                </button>
+              </p>
+            </div>
+          )}
+          
+          <div className="mb-4 grid grid-cols-2 md:grid-cols-5 gap-4">
+            {encryptedScratchcards.map((_, idx) => {
+              const claimed = claims[idx]?.claimed
+              const selected = selectedIndex === idx
+              const unavailable = claimed || loading || alreadyPlayed
+              return (
+                <button
+                  key={idx}
+                  data-idx={idx}
+                  className={`
+                    relative flex flex-col items-center justify-center
+                    w-auto h-24 rounded-xl shadow-lg border-2
+                    transition-all duration-200
+                    overflow-hidden
+                    ${claimed
+                      ? 'bg-gradient-to-br from-zinc-500 to-zinc-700 border-zinc-400 text-zinc-300 cursor-not-allowed opacity-60'
+                      : 'border-yellow-300'}
+                    ${unavailable ? 'cursor-not-allowed hover:scale-100' : 'hover:scale-105 hover:shadow-2xl'}
+                  `}
+                  disabled={unavailable}
+                  onClick={() => handleClaimScratchcard(idx)}
                   style={{
-                    background: 'repeating-linear-gradient(135deg, #888 0 10px, #aaa 10px 20px)',
-                    opacity: selected && !claimed ? 1 : 0,
-                    transition: 'opacity 0.2s'
+                    backgroundImage: claimed
+                      ? 'repeating-linear-gradient(135deg, #888 0 10px, #aaa 10px 20px)'
+                      : (() => {
+                          if (roundEnd && selected && scratchcardResult) {
+                            const isWinner = scratchcardResult.trim() === '1';
+                            return isWinner ? 
+                              'linear-gradient(120deg, #10b981 0%, #34d399 100%)' : 
+                              'linear-gradient(120deg, #ef4444 0%, #f87171 100%)';
+                          }
+                          return 'linear-gradient(120deg, #f7e07c 0%, #f9d423 100%)';
+                        })()
                   }}
-                />
-              )}
-              
-              {/* Decorative pattern for scratchcard */}
-              {!claimed && (
-                <div 
-                  className="absolute inset-0 z-10 mix-blend-overlay opacity-60"
-                  style={{
-                    backgroundImage: `
-                      radial-gradient(circle at 25% 25%, rgba(255,255,255,0.2) 2px, transparent 0),
-                      radial-gradient(circle at 75% 75%, rgba(255,255,255,0.2) 2px, transparent 0),
-                      radial-gradient(circle at 50% 50%, rgba(255,255,255,0.3) 3px, transparent 0),
-                      radial-gradient(circle at 15% 85%, rgba(0,0,0,0.1) 2px, transparent 0),
-                      radial-gradient(circle at 85% 15%, rgba(0,0,0,0.1) 2px, transparent 0)
-                    `,
-                    backgroundSize: '20px 20px, 20px 20px, 20px 20px, 20px 20px, 20px 20px',
-                    backgroundPosition: '0 0, 0 0, 0 0, 0 0, 0 0',
-                    pointerEvents: 'none'
-                  }}
-                />
-              )}
-              
-              {/* Scratch mask animation */}
-              <AnimatePresence>
-                {selected && !claimed && (
-                  <motion.div
-                    key="scratch-mask"
-                    initial={{ x: 0 }}
-                    animate={{ x: '110%' }}
-                    exit={{ opacity: 0 }}
-                    transition={{ duration: 1.1, ease: [0.7, 0, 0.3, 1] }}
-                    className="absolute inset-0 z-30 pointer-events-none"
-                    style={{
-                      background: 'linear-gradient(120deg, #f7e07c 0%, #f9d423 100%)',
-                      boxShadow: '0 0 16px 4px #f9d42355',
-                      borderRadius: 'inherit',
-                    }}
-                  />
-                )}
-              </AnimatePresence>
-              {/* Card content (always on top of gray underlay, under mask) */}
-                {/* <span className="text-xs font-bold tracking-widest uppercase mb-1 z-10 relative">
-                Scratchcard #{idx}
-              </span> */}
-              {/* <span className={`text-md italic z-10 relative ${claimed ? 'line-through' : ''}`}>
-                {claimed ? 'CLAIMED' : 'SCRATCH ME'}
-              </span> */}
-              
-              {/* Show a lottery/scratch symbol on unclaimed cards */}
-              {!claimed && !selected && (
-                <div className="text-zinc-800 font-bold z-20 relative">
-                  <span className="text-3xl">€</span>
-                </div>
-              )}
-              
-              {/* Show result on selected card after revealing */}
-              {(() => {
-                // Only show for the current selection
-                if (selected && !claimed && scratchcardResult) {
-                  return (
-                    <div className="z-40 relative">
-                      <span className="text-4xl font-bold text-white">
-                        {scratchcardResult.trim() === '1' ? '€' : 'X'}
-                      </span>
+                >
+                  {/* Gray underlay for scratch effect */}
+                  {!claimed && (
+                    <div
+                      className="absolute inset-0 z-0"
+                      style={{
+                        background: 'repeating-linear-gradient(135deg, #888 0 10px, #aaa 10px 20px)',
+                        opacity: selected && !claimed ? 1 : 0,
+                        transition: 'opacity 0.2s'
+                      }}
+                    />
+                  )}
+                  
+                  {/* Decorative pattern for scratchcard */}
+                  {!claimed && (
+                    <div 
+                      className="absolute inset-0 z-10 mix-blend-overlay opacity-60"
+                      style={{
+                        backgroundImage: `
+                          radial-gradient(circle at 25% 25%, rgba(255,255,255,0.2) 2px, transparent 0),
+                          radial-gradient(circle at 75% 75%, rgba(255,255,255,0.2) 2px, transparent 0),
+                          radial-gradient(circle at 50% 50%, rgba(255,255,255,0.3) 3px, transparent 0),
+                          radial-gradient(circle at 15% 85%, rgba(0,0,0,0.1) 2px, transparent 0),
+                          radial-gradient(circle at 85% 15%, rgba(0,0,0,0.1) 2px, transparent 0)
+                        `,
+                        backgroundSize: '20px 20px, 20px 20px, 20px 20px, 20px 20px, 20px 20px',
+                        backgroundPosition: '0 0, 0 0, 0 0, 0 0, 0 0',
+                        pointerEvents: 'none'
+                      }}
+                    />
+                  )}
+                  
+                  {/* Scratch mask animation */}
+                  <AnimatePresence>
+                    {selected && !claimed && (
+                      <motion.div
+                        key="scratch-mask"
+                        initial={{ x: 0 }}
+                        animate={{ x: '110%' }}
+                        exit={{ opacity: 0 }}
+                        transition={{ duration: 1.1, ease: [0.7, 0, 0.3, 1] }}
+                        className="absolute inset-0 z-30 pointer-events-none"
+                        style={{
+                          background: 'linear-gradient(120deg, #f7e07c 0%, #f9d423 100%)',
+                          boxShadow: '0 0 16px 4px #f9d42355',
+                          borderRadius: 'inherit',
+                        }}
+                      />
+                    )}
+                  </AnimatePresence>
+                  {/* Card content (always on top of gray underlay, under mask) */}
+                    {/* <span className="text-xs font-bold tracking-widest uppercase mb-1 z-10 relative">
+                    Scratchcard #{idx}
+                  </span> */}
+                  {/* <span className={`text-md italic z-10 relative ${claimed ? 'line-through' : ''}`}>
+                    {claimed ? 'CLAIMED' : 'SCRATCH ME'}
+                  </span> */}
+                  
+                  {/* Show a lottery/scratch symbol on unclaimed cards */}
+                  {!claimed && !selected && (
+                    <div className="text-zinc-800 font-bold z-20 relative">
+                      <span className="text-3xl">€</span>
                     </div>
-                  );
-                }
-                return null;
-              })()}
-              
-              {/* Show 'Selected' text only for actively selected card */}
-              {selected && !claimed && (
-                <span className="mt-2 text-emerald-600 text-xs font-bold animate-pulse z-40 relative">Selected</span>
-              )}
-            </button>
-          )
-        })}
-      </div>
-      {winMsg && (
-        <div className="mt-4 text-center">
-          <span className={`text-lg font-bold ${winMsg.includes('WON') ? 'text-emerald-400' : 'text-red-400'}`}>
-            {winMsg}
-          </span>
-        </div>
-      )}
-      {alreadyPlayed && (
-        <div className="mt-2 text-center text-xs text-zinc-400">
-          You have already played this round. Wait for the next round to play again.
-        </div>
-      )}
-      {error && (
-        <div className="mt-4 text-center text-red-400">{error}</div>
-      )}
-      <div className="mt-8 text-xs text-zinc-500 container text-clip">
-        <div>RSA Public Key (PEM):</div>
-        <p className="bg-zinc-800 p-2 rounded font-mono text-clip">
-          {rsaPublicKey}
-        </p>
-      </div>
-      {localHistory.length > 0 && (
-        <div className="mt-8">
-          <h3 className="text-xs text-zinc-400 mb-2 uppercase tracking-widest">Your Scratchcard History</h3>
-          <ul className="text-xs text-zinc-300 space-y-1">
-            {localHistory.slice(0, 10).map((h, i) => (
-              <li key={i} className="flex items-center gap-2">
-                <span className="font-mono">{h.date.slice(0, 19).replace('T', ' ')}</span>
-                <span className="font-mono">|</span>
-                <span>Round: {h.roundEnd ? h.roundEnd.slice(0, 19).replace('T', ' ') : '-'}</span>
-                <span className="font-mono">|</span>
-                <span>Card #{h.index}</span>
-                <span className={`font-bold ${h.value.trim() === '1' ? 'text-emerald-400' : 'text-red-400'}`}>
-                  {h.value.trim() === '1' ? 'WIN' : h.value.trim() === '0' ? 'LOSE' : h.value}
-                </span>
-              </li>
-            ))}
-          </ul>
-        </div>
-      )}
+                  )}
+                  
+                  {/* Show result on selected card after revealing */}
+                  {(() => {
+                    // Only show for the current selection
+                    if (selected && !claimed && scratchcardResult) {
+                      return (
+                        <div className="z-40 relative">
+                          <span className="text-4xl font-bold text-white">
+                            {scratchcardResult.trim() === '1' ? '€' : 'X'}
+                          </span>
+                        </div>
+                      );
+                    }
+                    return null;
+                  })()}
+                  
+                  {/* Show 'Selected' text only for actively selected card */}
+                  {/* {selected && !claimed && (
+                    <span className="mt-2 text-emerald-600 text-xs font-bold animate-pulse z-40 relative">Selected</span>
+                  )} */}
+                </button>
+              )
+            })}
+          </div>
+          {winMsg && (
+            <div className="mt-4 text-center">
+              <span className={`text-lg font-bold ${winMsg.includes('GANHOU') ? 'text-emerald-400' : 'text-red-400'}`}>
+                {winMsg}
+              </span>
+            </div>
+          )}
+          {alreadyPlayed && (
+            <div className="mt-2 text-center text-xs text-zinc-400">
+              Já jogou nesta ronda. Espere pela próxima para jogar novamente!
+            </div>
+          )}
+          {/* {error && (
+            <div className="mt-4 text-center text-red-400">{error}</div>
+          )} */}
+          {(!token || !rsaPublicKey) && (
+            <div className="mt-4 p-3 bg-red-900/30 border border-red-800 rounded-md">
+              <p className="text-red-300 font-medium">
+                <span className="text-red-200 font-bold">⚠️ Erro de Segurança</span>
+              </p>
+              <p className="text-red-400 text-sm mt-1">
+                {!token ? (
+                  <>
+                    Não foi possível verificar a sua identidade. Por favor, faça login novamente.
+                  </>
+                ) : !rsaPublicKey ? (
+                  <>
+                    De momento não é possível garantir a confidencialidade e privacidade das suas jogadas.
+                    Por favor, tente novamente mais tarde.
+                  </>
+                ) : (
+                  <>
+                    Ocorreu um erro de segurança. Por favor, recarregue a página ou contacte o suporte.
+                  </>
+                )}
+              </p>
+            </div>
+          )}
+          {/* <div className="mt-8 text-xs text-zinc-500 container text-clip">
+            <div>RSA Public Key (PEM):</div>
+            <p className="bg-zinc-800 p-2 rounded font-mono text-clip">
+              {rsaPublicKey}
+            </p>
+          </div> */}
+
+          </div>
+
+         {localHistory.length > 0 && (
+            <div className="">
+              <h3 className="text-xs text-zinc-400 mb-2 uppercase tracking-widest">Histórico</h3>
+              <ul className="text-xs text-zinc-300 space-y-1">
+                {localHistory.slice(0, 10).map((h, i) => (
+                  <li key={i} className="flex items-center gap-2">
+                    {/* <span className="font-mono">{h.date.slice(0, 19).replace('T', ' ')}</span>
+                    <span className="font-mono">|</span> */}
+                    <span className="font-mono">Ronda: {h.roundEnd ? h.roundEnd.slice(0, 19).replace('T', ' ') : '-'}</span>
+                    <span className="font-mono">|</span>
+                    <span className={`font-bold ${h.value.trim() === '1' ? 'text-emerald-400' : 'text-red-400'}`}>
+                      {h.value.trim() === '1' ? 'VITÓRIA' : h.value.trim() === '0' ? 'DERROTA' : h.value}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+          </div>
+    </div>
     </div>
   )
 }

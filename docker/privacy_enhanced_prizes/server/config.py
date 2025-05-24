@@ -1,7 +1,7 @@
 # --- Scratchcard Config ---
-SCRATCHCARD_COUNT = 12
+SCRATCHCARD_COUNT = 20
 WINNER_PERCENTAGE = 0.10
-TIME_PER_ROUND = 1 # 1 minute
+TIME_PER_ROUND = 2 # 1 minute
 
 # --- RSA Config ---
 RSA_KEY_SIZE = 2048  # bits

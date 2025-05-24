@@ -22,15 +22,15 @@ class MacMiddleware(BaseHTTPMiddleware):
                 body_str = body.decode("utf-8")
                 
                 if not verify_mac(body_str, mac_header):
-                    logger.warning(f"MAC validation failed for request to {request.url.path}")
+                    logger.warning(f"[MAC] MAC validation failed for request to {request.url.path}")
                     return Response(
                         content=json.dumps({"detail": "Invalid MAC"}),
                         status_code=403,
                         media_type="application/json"
                     )
-                logger.debug(f"MAC validation successful for request to {request.url.path}")
+                # logger.debug(f"[MAC] MAC validation successful for request to {request.url.path}")
         except Exception as e:
-            logger.error(f"MAC verification error: {str(e)}")
+            logger.error(f"[MAC] MAC verification error: {str(e)}")
         
         # Process the request
         response = await call_next(request)
@@ -49,7 +49,7 @@ class MacMiddleware(BaseHTTPMiddleware):
                 
                 # Create new response with MAC header
                 headers = dict(response.headers.items()) | {"X-MAC": mac}
-                logger.debug(f"Added MAC header to response for {request.url.path}")
+                # logger.debug(f"[MAC] Added MAC header to response for {request.url.path}")
                 
                 return Response(
                     content=resp_body,

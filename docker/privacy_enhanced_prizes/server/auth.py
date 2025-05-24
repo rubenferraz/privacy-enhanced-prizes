@@ -39,9 +39,43 @@ class DHExchange(BaseModel):
 def create_jwt(username: str):
     payload = {
         "sub": username,
-        "exp": time.time() + 3600
+        "exp": time.time() + (60 * 60) # 1 hour expiration
     }
     return jwt.encode(payload, SECRET_KEY, algorithm="HS256")
+
+# Função para verificar a validade dos tokens JWT
+def verify_token(token: str) -> str:
+    """
+    Verifica se um token JWT é válido.
+    
+    Args:
+        token: O token JWT a verificar
+        
+    Returns:
+        O username se o token for válido
+        
+    Raises:
+        HTTPException: Se o token for inválido ou tiver expirado
+    """
+    try:
+        payload = jwt.decode(token, SECRET_KEY, algorithms=["HS256"])
+        username = payload.get("sub")
+        
+        # Verificar se o token corresponde a uma sessão ativa
+        if username not in sessions or sessions[username] != token:
+            logging.warning(f"Token válido mas sessão inativa para {username}")
+            raise HTTPException(status_code=401, detail="Sessão inválida")
+            
+        return username
+    except jwt.ExpiredSignatureError:
+        logging.warning("Token expirado")
+        raise HTTPException(status_code=401, detail="Token expirado")
+    except jwt.InvalidTokenError as e:
+        logging.warning(f"Token inválido: {str(e)}")
+        raise HTTPException(status_code=401, detail="Token inválido")
+    except Exception as e:
+        logging.error(f"Erro na verificação do token: {str(e)}")
+        raise HTTPException(status_code=401, detail="Erro na verificação do token")
 
 # Parâmetros para o Diffie-Hellman
 # 1024 bits
@@ -183,20 +217,20 @@ def active_sessions():
 @router.get("/logout")
 def logout(token: str = None, request: Request = None):
     # jwt token 
-    logging.debug(f"Attempting to logout with token: {token}")
+    logging.debug(f"[LOGOUT] A tentar sair com o token JWT: {token}")
     if not token and request:
         auth = request.headers.get("Authorization")
         if auth and auth.lower().startswith("bearer "):
             token = auth[7:]
     if not token:
-        logging.error("No token provided for logout")
+        logging.error("[LOGOUT] O token JWT não foi fornecido")
         raise HTTPException(status_code=401, detail="No token provided")
     for username, user_token in list(sessions.items()):
         if user_token == token:
             del sessions[username]
-            logging.debug(f"User {username} logged out successfully")
+            logging.debug(f"[LOGOUT] User {username} foi-se embora")
             return {"message": "Logged out successfully"}
-    logging.error("Invalid token")
+    logging.error("[LOGOUT] Token JWT inválido")
     raise HTTPException(status_code=401, detail="Invalid token")
 
 @router.get("/get-users")
@@ -210,3 +244,94 @@ def get_users():
     }
     logging.debug(f"Current users-passwords: {users_dict}")
     return {"users": users_dict}
+
+@router.get("/verify-token")
+def verify_token_endpoint(request: Request):
+    """
+    Verifica se o token JWT fornecido é válido.
+    
+    Returns:
+        Validade do token JWT e o username associado, caso seja válido.
+    """
+    logging.debug("[JWT] Verificação do token JWT")
+    
+    # Extrair token do cabeçalho Authorization
+    auth = request.headers.get("Authorization")
+    if not auth or not auth.lower().startswith("bearer "):
+        logging.warning("[JWT] Token não foi fornecido nos cabeçalhos")
+        return {
+            "valid": False,
+            "reason": "Token não fornecido",
+            "remaining_time": 0
+        }
+    
+    token = auth[7:]  # Remove 'Bearer ' do início
+    
+    try:
+        # Decodificar token sem verificar assinatura primeiro para obter tempo restante
+        payload = jwt.decode(token, options={"verify_signature": False})
+        exp_time = payload.get("exp", 0)
+        current_time = time.time()
+        remaining_seconds = max(0, int(exp_time - current_time))
+        
+        # Agora verificar completamente o token
+        username = verify_token(token)
+        
+        return {
+            "valid": True,
+            "username": username,
+            "remaining_time": remaining_seconds,
+            "expires_at": exp_time
+        }
+        
+    except HTTPException as e:
+        logging.warning(f"[JWT] Token inválido: {e.detail}")
+        return {
+            "valid": False,
+            "reason": e.detail,
+            "remaining_time": 0
+        }
+    except Exception as e:
+        logging.error(f"[JWT] Erro ao verificar token: {str(e)}")
+        return {
+            "valid": False,
+            "reason": "Erro interno ao verificar token",
+            "remaining_time": 0
+        }
+@router.post("/renew-token")
+def renew_token(request: Request):
+    """
+    Renova um token JWT **válido**.
+    
+    Returns:
+        Um novo token JWT + username
+    """
+    logging.debug("[JWT] Tentando renovar token JWT")
+    
+    # Extrair token do cabeçalho Authorization
+    auth = request.headers.get("Authorization")
+    if not auth or not auth.lower().startswith("bearer "):
+        logging.warning("[JWT] Token não fornecido nos cabeçalhos")
+        raise HTTPException(status_code=401, detail="Token não fornecido")
+    
+    token = auth[7:]  # Remove 'Bearer ' do início
+    
+    try:
+        username = verify_token(token)
+        new_token = create_jwt(username)
+        
+        sessions[username] = new_token # atualizar no dicionário das sessões
+        
+        logging.debug(f"[JWT] Token renovado com sucesso para o user {username}")
+        
+        return {
+            "token": new_token,
+            "username": username
+        }
+        
+    except HTTPException as e:
+        logging.warning(f"[JWT] Falha ao renovar token: {e.detail}")
+        raise HTTPException(status_code=401, detail=f"Não foi possível renovar o token: {e.detail}")
+    except Exception as e:
+        logging.error(f"[JWT] Erro ao renovar token: {str(e)}")
+        raise HTTPException(status_code=500, detail="Erro interno ao renovar token")

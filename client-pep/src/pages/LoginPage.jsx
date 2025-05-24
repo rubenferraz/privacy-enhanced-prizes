@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { fetchWithMAC } from '../utils/mac'
+import { FaArrowLeft } from 'react-icons/fa'
 
 const API_URL = 'https://localhost:8000/auth'
 
@@ -50,18 +51,30 @@ function LoginPage() {
   }
 
   return (
-    <div className="max-w-md mx-auto mt-16 p-8 bg-zinc-900 rounded shadow">
+    <div className='flex flex-col items-center justify-center min-h-screen py-12'>
+    {/* back to home page */}
+      <div className='text-start container max-w-lg mb-2'>
+        <button 
+          onClick={() => navigate('/')}
+          className="mt-0 text-zinc-200 cursor-pointer transition-colors duration-300 font-bold tracking-wide uppercase text-xs"
+        >
+          {/* arrow icon */}
+          <FaArrowLeft className="inline mr-2 text-xs" />
+            Voltar ao início
+        </button>
+      </div>
+      <div className="container max-w-lg p-8 bg-zinc-900 rounded shadow">
       <h2 className="text-2xl font-extralight mb-3 text-zinc-100 tracking-wide uppercase">Login</h2>
       <form onSubmit={handleLogin} className="flex flex-col gap-4">
         <input
-          className="border rounded px-3 py-2 text-zinc-400 tracking-wide"
+          className="border-b-1 border-zinc-700 hover:text-zinc-300 hover:border-zinc-500 px-3 py-2 text-zinc-400 tracking-wide transition-colors duration-300"
           placeholder="username"
           value={loginUsername}
           onChange={e => setLoginUsername(e.target.value)}
           required
         />
         <input
-          className="border rounded px-3 py-2 text-zinc-400 tracking-wide"
+          className="border-b-1 border-zinc-700 hover:text-zinc-300 hover:border-zinc-500 px-3 py-2 text-zinc-400 tracking-wide transition-colors duration-300"
           placeholder="password"
           type="password"
           value={loginPassword}
@@ -70,14 +83,14 @@ function LoginPage() {
         />
         <button
           type="submit"
-          className="bg-sky-950 font-extralight text-white rounded px-4 py-2 hover:bg-sky-900 transition"
+          className="bg-zinc-700 font-extralight text-white cursor-pointer border-b-2 border-transparent hover:border-amber-400 px-4 py-2 hover:bg-zinc-800 transition-all duration-300"
         >
-          <span className='uppercase tracking-wide text-xs'>Login</span>
+          <span className='uppercase font-bold tracking-wide text-xs'>Login</span>
         </button>
       </form>
       <div className="mt-4 text-center">
         <p className="text-zinc-400 text-sm">
-          Não tem conta? <span onClick={() => navigate('/register')} className="text-sky-400 cursor-pointer hover:underline">Registar</span>
+          Não tem conta? <span onClick={() => navigate('/register')} className="text-zinc-300 cursor-pointer hover:underline">Registe-se</span>
         </p>
       </div>
       
@@ -94,6 +107,7 @@ function LoginPage() {
           </p>
         </div>
       )}
+    </div>
     </div>
   );
 }

@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import * as bigintConversion from 'bigint-conversion'
 import { fetchWithMAC } from '../utils/mac'
+import { FaArrowLeft } from 'react-icons/fa'
 
 const API_URL = 'https://localhost:8000/auth'
 
@@ -234,18 +235,30 @@ function RegisterPage() {
   }
 
   return (
-    <div className="max-w-md mx-auto mt-16 p-8 bg-zinc-900 rounded shadow">
+    <div className='flex flex-col items-center justify-center min-h-screen py-12'>
+       {/* back to home page */}
+      <div className='text-start container max-w-lg mb-2'>
+        <button 
+          onClick={() => navigate('/')}
+          className="mt-0 text-zinc-200 cursor-pointer transition-colors duration-300 font-bold tracking-wide uppercase text-xs"
+        >
+          {/* arrow icon */}
+          <FaArrowLeft className="inline mr-2 text-xs" />
+           Voltar ao início
+        </button>
+      </div>
+      <div className="container max-w-lg p-8 bg-zinc-900 rounded shadow">
       <h2 className="text-2xl font-extralight mb-3 text-zinc-100 tracking-wide uppercase">Registo</h2>
       <form onSubmit={handleRegister} className="flex flex-col gap-4">
         <input
-          className="border rounded px-3 py-2 text-zinc-400 tracking-wide"
+          className="border-b-1 border-zinc-700 hover:text-zinc-300 hover:border-zinc-500 px-3 py-2 text-zinc-400 tracking-wide transition-colors duration-300"
           placeholder="username"
           value={registerUsername}
           onChange={e => setRegisterUsername(e.target.value)}
           required
         />
         <input
-          className="border rounded px-3 py-2 text-zinc-400 tracking-wide"
+          className="border-b-1 border-zinc-700 hover:text-zinc-300 hover:border-zinc-500 px-3 py-2 text-zinc-400 tracking-wide transition-colors duration-300"
           placeholder="password"
           type="password"
           value={registerPassword}
@@ -254,35 +267,36 @@ function RegisterPage() {
         />
         <button
           type="submit"
-          className="bg-sky-950 font-extralight text-white rounded px-4 py-2 hover:bg-sky-900 transition"
+          className="bg-zinc-700 font-extralight text-white cursor-pointer border-b-2 border-transparent hover:border-amber-400 px-4 py-2 hover:bg-zinc-800 transition-all duration-300"
         >
-          <span className='uppercase tracking-wide text-xs'>Registar</span>
+          <span className='uppercase font-bold tracking-wide text-xs'>Registar</span>
         </button>
       </form>
       <div className="mt-4 text-center">
         <p className="text-zinc-400 text-sm">
-          Já tem conta? <span onClick={() => navigate('/login')} className="text-sky-400 cursor-pointer hover:underline">Login</span>
+          Já tem conta? <span onClick={() => navigate('/login')} className="text-zinc-300 cursor-pointer hover:underline">Login</span>
         </p>
       </div>
       
       {registrationSuccess && (
-        <div className="mt-4 text-center">
-          <div className="bg-green-700/20 p-3 rounded">
-            <p className="text-green-300 mb-2">Registo efetuado com sucesso!</p>
-            <button 
-              onClick={() => navigate('/login')} 
-              className="bg-sky-950 font-bold text-white rounded px-4 py-2 hover:bg-sky-900 transition"
-            >
-              <span className='lowercase tracking-wide text-xs'>Fazer Login</span>
-            </button>
-          </div>
+        <div className="mt-4 p-3 bg-green-700/20 rounded">
+          <p className="text-green-300 text-sm mb-2">Registo efetuado com sucesso!</p>
+          <button 
+            onClick={() => navigate('/login')} 
+            className="bg-zinc-700 font-extralight text-white cursor-pointer border-b-2 border-transparent hover:border-amber-400 px-4 py-2 hover:bg-zinc-800 transition-all duration-300"
+          >
+            <span className='uppercase font-bold tracking-wide text-xs'>Login</span>
+          </button>
         </div>
       )}
       
-      <div className="mt-4 text-center flex items-center justify-center"> 
-        <p className='text-zinc-200 lowercase tracking-wide font-extralight bg-zinc-200/10 px-2 py-1 rounded'>
-            {!registrationSuccess && registerMsg}
-        </p>
+      {!registrationSuccess && registerMsg && (
+        <div className="mt-4 text-center flex items-center justify-center">
+          <p className='text-zinc-200 lowercase tracking-wide font-extralight bg-zinc-200/10 px-2 py-1 rounded'>
+            {registerMsg}
+          </p>
+        </div>
+      )}
       </div>
     </div>
   )

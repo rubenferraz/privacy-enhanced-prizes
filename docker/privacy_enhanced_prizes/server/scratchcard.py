@@ -8,8 +8,9 @@ import base64
 from pydantic import BaseModel
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import padding
-from server.auth import sessions
+from server.auth import sessions, verify_token
 import jwt
+import logging
 
 router = APIRouter()
 
@@ -24,16 +25,21 @@ _user_claims = {}  # username -> index
 # Store round end time (global, updated on each generate_scratchcards)
 _round_end = None
 
+# Usar a função verify_token em vez da implementação atual
+def get_auth_token(request: Request) -> str:
+    """Extrai o token de autenticação dos cabeçalhos da requisição"""
+    auth = request.headers.get("authorization", "")
+    if auth and auth.lower().startswith("bearer "):
+        return auth[7:]  # Remove 'Bearer ' do início
+    return ""
+
+# Função atualizada para utilizar verify_token
 def get_username_from_token(token: str):
-    # Find username by token in sessions
-    for username, t in sessions.items():
-        if t == token:
-            return username
-    # Try to decode JWT directly if not found
+    """Obtém o username a partir do token utilizando verify_token"""
     try:
-        payload = jwt.decode(token, "superseguro", algorithms=["HS256"])
-        return payload.get("sub")
-    except Exception:
+        return verify_token(token)
+    except HTTPException:
+        # Se verify_token lançar uma exceção, retorna None para manter compatibilidade
         return None
 
 def generate_scratchcards():
@@ -47,7 +53,6 @@ def generate_scratchcards():
         _current_scratchcards = cards
         _claimed_indices = set()  # Reset claims for new round
         _user_claims = {}         # Reset user claims for new round
-        # Set round end time using TIME_PER_ROUND from config (in minutes)
         _round_end = (datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(minutes=TIME_PER_ROUND)).isoformat() + "Z"
 
 def get_current_scratchcards():
@@ -90,31 +95,61 @@ class OTRequest(BaseModel):
 @router.post("/ot/reveal")
 def ot_reveal(data: OTRequest, request: Request):
     """Reveal the scratchcard to the user using OT (RSA decryption of blinded value)."""
-    # Get token from Authorization header
-    auth = request.headers.get("authorization") or ""
-    token = auth.replace("Bearer ", "").strip()
-    username = get_username_from_token(token)
-    if not username:
-        raise HTTPException(status_code=401, detail="Missing or invalid token")
+    # Obter e verificar o token de autenticação
+    token = get_auth_token(request)
+    if not token:
+        raise HTTPException(status_code=401, detail="Token de autenticação ausente")
+    
+    try:
+        username = verify_token(token)
+    except HTTPException as e:
+        # Propagar a exceção da verificação de token
+        raise e
+    
+    logging.debug(f"[OT]: Autenticado como: {username}")
+    
     with _lock:
         if username in _user_claims:
-            raise HTTPException(status_code=400, detail="User already claimed a scratchcard this round")
+            raise HTTPException(status_code=400, detail="Utilizador já reclamou uma raspadinha nesta ronda")
         if data.index in _claimed_indices:
-            raise HTTPException(status_code=400, detail="Scratchcard already claimed")
+            raise HTTPException(status_code=400, detail="Raspadinha já foi reclamada")
         if data.index < 0 or data.index >= len(_current_scratchcards):
-            raise HTTPException(status_code=400, detail="Invalid scratchcard index")
+            raise HTTPException(status_code=400, detail="Índice de raspadinha inválido")
         _claimed_indices.add(data.index)
         _user_claims[username] = data.index
+        logging.debug(f"[OT]: Utilizador {username} reclamou a carta no índice {data.index}")
+    
     blinded = base64.b64decode(data.blinded_value)
+    logging.debug(f"[OT]: Received blinded value (first 20 bytes): {blinded[:20].hex()}")
+    
     try:
         privkey = g.rsa_private_key
+        logging.debug(f"[OT]: Private key type: {type(privkey)}")
+        
         numbers = privkey.private_numbers()
+        logging.debug(f"[OT]: Got private numbers")
+        
         n = numbers.public_numbers.n
         d = numbers.d
+        logging.debug(f"[OT]: n (first 20 chars): {str(n)[:20]}...")
+        logging.debug(f"[OT]: d (first 20 chars): {str(d)[:20]}...")
+        
         blinded_int = int.from_bytes(blinded, byteorder='big')
+        logging.debug(f"[OT]: Blinded int (first 20 chars): {str(blinded_int)[:20]}...")
+        
         revealed_int = pow(blinded_int, d, n)
+        logging.debug(f"[OT]: Revealed int (first 20 chars): {str(revealed_int)[:20]}...")
+        
         k = (n.bit_length() + 7) // 8
+        logging.debug(f"[OT]: Key size in bytes: {k}")
+        
         revealed_bytes = revealed_int.to_bytes(k, byteorder='big')
-        return {"revealed": base64.b64encode(revealed_bytes).decode()}
+        logging.debug(f"[OT]: Revealed bytes (first 20 bytes): {revealed_bytes[:20].hex()}")
+        
+        encoded = base64.b64encode(revealed_bytes).decode()
+        logging.debug(f"[OT]: Final encoded result (first 20 chars): {encoded[:20]}...")
+        
+        return {"revealed": encoded}
     except Exception as e:
+        logging.error(f"[OT]: Error in reveal: {str(e)}", exc_info=True)
         raise HTTPException(status_code=400, detail=f"OT failed: {str(e)}")

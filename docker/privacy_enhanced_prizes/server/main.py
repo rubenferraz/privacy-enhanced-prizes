@@ -62,13 +62,14 @@ def get_scratchcards():
 async def periodic_scratchcard_generation():
     while True:
         generate_scratchcards()
-        await asyncio.sleep(TIME_PER_ROUND * 60)
+        await asyncio.sleep(TIME_PER_ROUND * 60) # 1 x 60 x 2 = 2 minutes
 
 # gerar as chaves RSA
 @app.on_event("startup")
 async def startup_event():
     g.rsa_private_key, g.rsa_public_key = generate_rsa_keys()
     asyncio.create_task(periodic_scratchcard_generation())
+    logging.debug("[STARTUP] Servidor iniciado e as chaves RSA foram geradas.")
 
 if __name__ == "__main__":
     uvicorn.run("server.main:app", host="0.0.0.0", port=8000, reload=True)
